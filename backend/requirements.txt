@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+anthropic
+chromadb
+rank-bm25
+yfinance
+python-dotenv
+pypdf
+tiktoken
