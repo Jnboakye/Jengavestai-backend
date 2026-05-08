@@ -7,3 +7,4 @@ yfinance
 python-dotenv
 pypdf
 tiktoken
+python-multipart

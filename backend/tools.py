@@ -161,6 +161,26 @@ def search_documents(query: str, n_results: int = 5) -> dict:
         }
 
 
+def search_financial_news(query: str) -> dict:
+    """
+    Searches for financial news using web search.
+    Claude handles this via built-in web search capability.
+    
+    Note: This function signals to Claude that it should use
+    its built-in web search to find the latest financial news
+    relevant to the user's query.
+    """
+    return {
+        "query": query,
+        "status": "web_search_requested",
+        "message": f"Searching for financial news related to: {query}. "
+                   f"Using web search to fetch latest market news, "
+                   f"earnings reports, and financial updates.",
+        "instructions": "Please use your web search capability to find the latest news "
+                       f"for: {query}"
+    }
+
+
 def save_report_to_drive(title: str, content: str) -> dict:
     """
     Saves a report to Google Drive via MCP
@@ -190,6 +210,9 @@ def execute_tool(tool_name: str, tool_input: dict) -> str:
             tool_input["query"],
             tool_input.get("n_results", 5)
         )
+    
+    elif tool_name == "search_financial_news":
+        result = search_financial_news(tool_input["query"])
 
     elif tool_name == "save_report_to_drive":
         result = save_report_to_drive(
