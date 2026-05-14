@@ -149,7 +149,7 @@ class JengaVestAgent:
         # First API call with extended thinking
         try:
             response = self.client.messages.create(
-                model="claude-3-7-sonnet-20250219",
+                model="claude-sonnet-4-5",
                 max_tokens=16000,
                 temperature=1,  # Required for extended thinking
                 thinking={
@@ -216,7 +216,7 @@ class JengaVestAgent:
             # Continue conversation with tool results
             try:
                 response = self.client.messages.create(
-                    model="claude-3-7-sonnet-20250219",
+                    model="claude-sonnet-4-5",
                     max_tokens=16000,
                     temperature=1,
                     thinking={
@@ -296,7 +296,7 @@ class JengaVestAgent:
         # First API call with streaming
         try:
             with self.client.messages.stream(
-                model="claude-3-7-sonnet-20250219",
+                model="claude-sonnet-4-5",
                 max_tokens=16000,
                 temperature=1,
                 thinking={
