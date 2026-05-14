@@ -1,6 +1,7 @@
 # tools.py - Tool definitions and schemas for JengaVest AI
 
-import yfinance as yf
+import requests
+import os
 from datetime import datetime
 from rag import search as rag_search
 
@@ -13,7 +14,7 @@ from rag import search as rag_search
 TOOLS = [
     {
         "name": "get_stock_data",
-        "description": "Fetches live stock prices, performance data and basic financials for one or more stocks using yfinance",
+        "description": "Fetches live stock prices, performance data and basic financials for one or more stocks using Finnhub API",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -90,28 +91,41 @@ TOOLS = [
 def get_stock_data(tickers: list) -> dict:
     """
     Fetches live stock data for a list of tickers
-    using yfinance
+    using Finnhub API
     """
+    api_key = os.getenv("FINNHUB_API_KEY")
     results = {}
 
     for ticker in tickers:
         try:
-            stock = yf.Ticker(ticker)
-            info = stock.info
+            # Get current quote
+            quote_url = f"https://finnhub.io/api/v1/quote?symbol={ticker}&token={api_key}"
+            quote_response = requests.get(quote_url, timeout=10)
+            quote = quote_response.json()
+
+            # Get company profile
+            profile_url = f"https://finnhub.io/api/v1/stock/profile2?symbol={ticker}&token={api_key}"
+            profile_response = requests.get(profile_url, timeout=10)
+            profile = profile_response.json()
+
+            current_price = quote.get("c", 0)
+            previous_close = quote.get("pc", 0)
+            price_change = quote.get("d", 0)
+            price_change_percent = quote.get("dp", 0)
 
             results[ticker] = {
-                "name": info.get("longName", ticker),
-                "current_price": info.get("currentPrice", "N/A"),
-                "previous_close": info.get("previousClose", "N/A"),
-                "price_change": info.get("currentPrice", 0) - info.get("previousClose", 0),
-                "price_change_percent": round(
-                    ((info.get("currentPrice", 0) - info.get("previousClose", 0)) 
-                    / info.get("previousClose", 1)) * 100, 2
-                ),
-                "market_cap": info.get("marketCap", "N/A"),
-                "volume": info.get("volume", "N/A"),
-                "52_week_high": info.get("fiftyTwoWeekHigh", "N/A"),
-                "52_week_low": info.get("fiftyTwoWeekLow", "N/A"),
+                "name": profile.get("name", ticker),
+                "current_price": current_price,
+                "previous_close": previous_close,
+                "price_change": round(price_change, 2),
+                "price_change_percent": round(price_change_percent, 2),
+                "high": quote.get("h", 0),
+                "low": quote.get("l", 0),
+                "open": quote.get("o", 0),
+                "market_cap": profile.get("marketCapitalization", "N/A"),
+                "currency": profile.get("currency", "USD"),
+                "exchange": profile.get("exchange", "N/A"),
+                "industry": profile.get("finnhubIndustry", "N/A"),
                 "timestamp": datetime.now().strftime("%B %d %Y %H:%M")
             }
 
@@ -128,15 +142,14 @@ def search_documents(query: str, n_results: int = 5) -> dict:
     """
     try:
         results = rag_search(query, n_results=n_results)
-        
+
         if not results:
             return {
                 "query": query,
                 "results": [],
                 "message": "No documents found matching the query"
             }
-        
-        # Format results for Claude
+
         formatted_results = []
         for result in results:
             formatted_results.append({
@@ -146,13 +159,13 @@ def search_documents(query: str, n_results: int = 5) -> dict:
                 "relevance_score": round(result["relevance_score"], 3),
                 "search_type": result["search_type"]
             })
-        
+
         return {
             "query": query,
             "results": formatted_results,
             "total_results": len(formatted_results)
         }
-    
+
     except Exception as e:
         return {
             "query": query,
@@ -163,12 +176,8 @@ def search_documents(query: str, n_results: int = 5) -> dict:
 
 def search_financial_news(query: str) -> dict:
     """
-    Searches for financial news using web search.
+    Searches for financial news.
     Claude handles this via built-in web search capability.
-    
-    Note: This function signals to Claude that it should use
-    its built-in web search to find the latest financial news
-    relevant to the user's query.
     """
     return {
         "query": query,
@@ -184,11 +193,12 @@ def search_financial_news(query: str) -> dict:
 def save_report_to_drive(title: str, content: str) -> dict:
     """
     Saves a report to Google Drive via MCP
-    This will be fully implemented when MCP is connected
+    Placeholder until MCP is fully connected
     """
-    # This function will call Google Drive MCP
-    # Placeholder for now
-    return {"message": f"Report '{title}' saved to Google Drive", "status": "success"}
+    return {
+        "message": f"Report '{title}' saved to Google Drive",
+        "status": "success"
+    }
 
 
 # ─────────────────────────────────────────
@@ -210,7 +220,7 @@ def execute_tool(tool_name: str, tool_input: dict) -> str:
             tool_input["query"],
             tool_input.get("n_results", 5)
         )
-    
+
     elif tool_name == "search_financial_news":
         result = search_financial_news(tool_input["query"])
 
