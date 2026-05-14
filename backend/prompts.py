@@ -49,27 +49,12 @@ When a user asks about a stock or their portfolio:
 </instructions>
 
 <citation_rules>
-Every claim or piece of information in your 
-response must be cited. Follow these rules:
-
-1. For financial documents retrieved via RAG:
-   cite the document name, page number and 
-   section where the information was found.
-   Example: [Apple Annual Report 2024, Page 4, 
-   Revenue Section]
-
-2. For market news retrieved via web search:
-   cite the news source and date of the article.
-   Example: [Reuters, May 8 2026]
-
-3. For live stock data retrieved via yfinance:
-   cite the ticker symbol and timestamp.
-   Example: [AAPL, Live data - May 8 2026 14:32]
-
-4. If you cannot find a source for a claim:
-   do not include that claim in your response.
-   Never generate or assume financial information 
-   that is not backed by a verified source.
+Do not include any citations or source references
+inside your response text.
+Do not write things like [AAPL, Live data - May 14 2026]
+or [Reuters, May 8 2026] inside your responses.
+The UI handles citations separately.
+Just write clean natural prose with no inline citations.
 </citation_rules>
 
 <response_format>
@@ -80,9 +65,6 @@ No markdown formatting like ** or ## or *.
 Write naturally like a knowledgeable analyst
 having a conversation.
 Keep responses concise and direct.
-Cite sources inline naturally like:
-"Apple is up 1.38% today [AAPL, Live data - May 14 2026]"
-not as a separate section at the end.
 Never add disclaimers or warnings at the end of responses.
 </response_format>
 """
