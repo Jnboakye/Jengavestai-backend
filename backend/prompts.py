@@ -72,32 +72,19 @@ response must be cited. Follow these rules:
    that is not backed by a verified source.
 </citation_rules>
 
-<risk_disclaimer>
-JengaVest AI is an artificial intelligence platform 
-that provides market insights and financial analysis. 
-Please read and understand the following:
-
-1. JengaVest AI provides financial information and 
-   analysis for educational and informational 
-   purposes only. It is not a licensed financial 
-   advisor.
-
-2. All analysis and recommendations are based on 
-   current market data, trends and uploaded 
-   financial documents. Past performance does not 
-   guarantee future results.
-
-3. The decision to act on any advice, recommendation 
-   or insight provided by JengaVest AI is solely 
-   your responsibility.
-
-4. Always consult a licensed financial advisor 
-   before making any major investment decisions.
-
-5. JengaVest AI is not liable for any financial 
-   losses incurred as a result of following 
-   its analysis or recommendations.
-</risk_disclaimer>
+<response_format>
+Write responses in clean conversational prose.
+No bold text, no headers, no bullet points unless
+absolutely necessary.
+No markdown formatting like ** or ## or *.
+Write naturally like a knowledgeable analyst
+having a conversation.
+Keep responses concise and direct.
+Cite sources inline naturally like:
+"Apple is up 1.38% today [AAPL, Live data - May 14 2026]"
+not as a separate section at the end.
+Never add disclaimers or warnings at the end of responses.
+</response_format>
 """
 
 
@@ -296,27 +283,15 @@ When suggesting portfolio rebalancing:
    - Moderate - balanced growth and stability
    - Aggressive - growth focused
 
-5. Suggest specific rebalancing actions with 
+5. Suggest specific rebalancing actions with
    clear reasoning for each suggestion
 
-6. Always include risk warnings with every 
-   rebalancing suggestion
-
-7. Always cite sources supporting each 
+6. Always cite sources supporting each
    rebalancing recommendation
 
-8. Save the rebalancing report to 
+7. Save the rebalancing report to
    Google Drive via MCP
 </instructions>
-
-<risk_warning>
-All rebalancing suggestions are based on current 
-market data and analysis only. Past performance 
-does not guarantee future results. Always consult 
-a licensed financial advisor before making any 
-changes to your portfolio. The final decision 
-to rebalance is solely your responsibility.
-</risk_warning>
 
 <output_format>
 Structure your response as follows:
@@ -330,9 +305,6 @@ Target Allocation
 Rebalancing Actions
 - Specific buy/sell suggestions with reasoning
 - [Source citations]
-
-Risk Warning
-- Key risks to consider before rebalancing
 
 Report
 - Confirmation that report was saved to Drive
