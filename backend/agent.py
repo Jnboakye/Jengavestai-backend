@@ -14,6 +14,11 @@ from workflows import route_query, run_parallel_fetch
 # Load environment variables
 load_dotenv()
 
+WEB_SEARCH_TOOL = {
+    "type": "web_search_20250305",
+    "name": "web_search"
+}
+
 # ─────────────────────────────────────────────────────────
 # AGENT INITIALIZATION
 # ─────────────────────────────────────────────────────────
@@ -74,12 +79,12 @@ class JengaVestAgent:
         
         # Check imports
         print("\nDependencies:")
-        try:
-            import yfinance
-            print("✓ yfinance available")
+        finnhub_key = os.getenv("FINNHUB_API_KEY")
+        if finnhub_key:
+            print("✓ Finnhub API key loaded")
             self.status["yfinance"] = "OK"
-        except ImportError:
-            print("❌ yfinance not available")
+        else:
+            print("❌ FINNHUB_API_KEY not set")
             self.status["yfinance"] = "FAILED"
         
         try:
@@ -163,7 +168,7 @@ class JengaVestAgent:
                         "text": task_prompt
                     }
                 ],
-                tools=TOOLS,
+                tools=TOOLS + [WEB_SEARCH_TOOL],
                 messages=messages
             )
         except Exception as e:
@@ -230,7 +235,7 @@ class JengaVestAgent:
                             "text": task_prompt
                         }
                     ],
-                    tools=TOOLS,
+                    tools=TOOLS + [WEB_SEARCH_TOOL],
                     messages=messages
                 )
             except Exception as e:
@@ -310,7 +315,7 @@ class JengaVestAgent:
                         "text": task_prompt
                     }
                 ],
-                tools=TOOLS,
+                tools=TOOLS + [WEB_SEARCH_TOOL],
                 messages=messages
             ) as stream:
                 for text in stream.text_stream:
