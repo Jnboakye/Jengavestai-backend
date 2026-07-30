@@ -16,7 +16,7 @@
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import requests
 
@@ -305,3 +305,89 @@ def get_history(ticker: str, range_key: str = "1M") -> dict:
         points.append({"t": stamp, "value": round(float(close), 2)})
 
     return {"ticker": sym, "range": range_key, "points": points}
+
+
+# ─────────────────────────────────────────────────────────
+# NEWS (Finnhub — free tier: general + per-company)
+# ─────────────────────────────────────────────────────────
+
+_news_cache: dict = {}
+NEWS_TTL = 300  # 5 minutes
+
+
+def _normalize_article(item: dict, related: str) -> dict:
+    return {
+        "headline": item.get("headline"),
+        "summary": (item.get("summary") or "")[:240],
+        "source": item.get("source") or "",
+        "url": item.get("url") or "",
+        "image": item.get("image") or "",
+        "datetime": item.get("datetime"),  # unix seconds
+        "related": related,
+    }
+
+
+def get_news(symbols: list) -> list:
+    """
+    Portfolio-aware market news via Finnhub: recent company news for each held
+    equity plus general market headlines, merged, de-duped and sorted.
+    """
+    key_cache = ",".join(sorted(symbols))
+    cached = _news_cache.get(key_cache)
+    if cached and time.time() - cached[0] < NEWS_TTL:
+        return cached[1]
+
+    api_key = _finnhub_key()
+    equities = [s.upper() for s in symbols if s and not _is_crypto(s)]
+    to_d = date.today().isoformat()
+    from_d = (date.today() - timedelta(days=7)).isoformat()
+
+    articles = []
+    seen = set()
+
+    def company_news(sym: str):
+        try:
+            resp = requests.get(
+                f"{FINNHUB_BASE}/company-news",
+                params={"symbol": sym, "from": from_d, "to": to_d, "token": api_key},
+                timeout=10,
+            )
+            return sym, resp.json()
+        except Exception:
+            return sym, []
+
+    if equities:
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            for sym, items in pool.map(company_news, equities):
+                if not isinstance(items, list):
+                    continue
+                for it in items[:4]:
+                    url = it.get("url")
+                    if not it.get("headline") or not url or url in seen:
+                        continue
+                    seen.add(url)
+                    articles.append(_normalize_article(it, sym))
+
+    # General market news (also covers crypto and anything unmatched).
+    try:
+        resp = requests.get(
+            f"{FINNHUB_BASE}/news",
+            params={"category": "general", "token": api_key},
+            timeout=10,
+        )
+        general = resp.json()
+        if isinstance(general, list):
+            for it in general[:10]:
+                url = it.get("url")
+                if not it.get("headline") or not url or url in seen:
+                    continue
+                seen.add(url)
+                articles.append(_normalize_article(it, "Market"))
+    except Exception:
+        pass
+
+    articles.sort(key=lambda a: a.get("datetime") or 0, reverse=True)
+    articles = articles[:24]
+
+    _news_cache[key_cache] = (time.time(), articles)
+    return articles

@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from agent import get_agent
 from rag import initialize_rag_pipeline
 from tools import TOOLS
-from stocks import list_stocks, search_stocks, get_quote, get_quotes, get_history, search_symbols
+from stocks import list_stocks, search_stocks, get_quote, get_quotes, get_history, search_symbols, get_news
 
 # Load environment variables
 load_dotenv()
@@ -331,6 +331,20 @@ async def stocks_quotes(symbols: str):
     """
     tickers = [s.strip().upper() for s in symbols.split(",") if s.strip()]
     return {"quotes": get_quotes(tickers)}
+
+
+@app.get("/news")
+async def market_news(symbols: Optional[str] = None):
+    """
+    Market news. With `symbols` (comma-separated held tickers), returns news
+    for those companies plus general market headlines; otherwise general only.
+    """
+    tickers = [s.strip().upper() for s in symbols.split(",")] if symbols else []
+    tickers = [t for t in tickers if t]
+    try:
+        return {"articles": get_news(tickers)}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not fetch news: {e}")
 
 
 @app.get("/stocks/search")
