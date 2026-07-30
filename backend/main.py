@@ -209,28 +209,29 @@ async def chat_stream(request: ChatRequest):
     if not request.message or not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
     
-    async def event_generator():
-        """Generate SSE events from agent stream"""
+    # NOTE: this is a *sync* generator on purpose. stream_agent does blocking
+    # network I/O to Claude; wrapping it in an async generator would block the
+    # event loop and make Starlette buffer the whole response (no live stream).
+    # A plain generator is run in a threadpool and flushed chunk-by-chunk.
+    def event_generator():
+        """Generate SSE events from the agent stream."""
         try:
             for event in agent.stream_agent(
                 user_message=request.message,
-                conversation_history=request.conversation_history
+                conversation_history=request.conversation_history,
             ):
                 yield event
-            
-            # Send final "done" event
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-        
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-    
+
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no"
-        }
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
     )
 
 
