@@ -59,9 +59,29 @@ CATALOGUE = [
     {"ticker": "NKE", "name": "Nike Inc.", "sector": "Consumer"},
     {"ticker": "SPY", "name": "S&P 500 ETF", "sector": "ETF"},
     {"ticker": "QQQ", "name": "Invesco QQQ ETF", "sector": "ETF"},
+    {"ticker": "BTC", "name": "Bitcoin", "sector": "Crypto"},
+    {"ticker": "ETH", "name": "Ethereum", "sector": "Crypto"},
+    {"ticker": "SOL", "name": "Solana", "sector": "Crypto"},
+    {"ticker": "XRP", "name": "XRP", "sector": "Crypto"},
+    {"ticker": "DOGE", "name": "Dogecoin", "sector": "Crypto"},
+    {"ticker": "ADA", "name": "Cardano", "sector": "Crypto"},
 ]
 
 _BY_TICKER = {s["ticker"]: s for s in CATALOGUE}
+
+# Crypto is priced via Twelve Data using BASE/USD pairs. Everything not in
+# here is treated as an equity (Finnhub for quotes).
+CRYPTO = {"BTC", "ETH", "SOL", "XRP", "DOGE", "ADA"}
+
+
+def _is_crypto(ticker: str) -> bool:
+    return ticker.upper() in CRYPTO
+
+
+def _td_symbol(ticker: str) -> str:
+    """Twelve Data symbol: crypto uses BASE/USD, equities use the plain ticker."""
+    t = ticker.upper()
+    return f"{t}/USD" if t in CRYPTO else t
 
 # range -> (Twelve Data interval, number of data points to request)
 RANGE_MAP = {
@@ -109,17 +129,9 @@ def search_stocks(query: str):
     ]
 
 
-def get_quote(ticker: str, name: str = None, sector: str = None) -> dict:
-    """Live quote for a single ticker via Finnhub /quote (cached briefly)."""
+def _finnhub_quote(sym: str, meta: dict) -> dict:
+    """Equity quote via Finnhub /quote."""
     key = _finnhub_key()
-    sym = ticker.upper()
-
-    cached = _quote_cache.get(sym)
-    if cached and time.time() - cached[0] < QUOTE_TTL:
-        return cached[1]
-
-    meta = _BY_TICKER.get(sym, {"ticker": sym, "name": name or sym, "sector": sector or "—"})
-
     resp = requests.get(
         f"{FINNHUB_BASE}/quote",
         params={"symbol": sym, "token": key},
@@ -129,14 +141,14 @@ def get_quote(ticker: str, name: str = None, sector: str = None) -> dict:
 
     price = quote.get("c")
     if not price:
-        raise ValueError(f"No price data returned for {ticker}")
+        raise ValueError(f"No price data returned for {sym}")
 
     prev = quote.get("pc") or price
     change = quote.get("dp")
     if change is None:
         change = ((price - prev) / prev * 100) if prev else 0.0
 
-    result = {
+    return {
         "ticker": meta["ticker"],
         "name": meta["name"],
         "sector": meta["sector"],
@@ -148,6 +160,51 @@ def get_quote(ticker: str, name: str = None, sector: str = None) -> dict:
         "open": quote.get("o"),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def _twelvedata_quote(sym: str, meta: dict) -> dict:
+    """Crypto quote via Twelve Data /quote (BASE/USD)."""
+    key = _twelvedata_key()
+    resp = requests.get(
+        f"{TWELVE_DATA_BASE}/quote",
+        params={"symbol": _td_symbol(sym), "apikey": key},
+        timeout=10,
+    )
+    data = resp.json()
+
+    close = data.get("close")
+    if close is None or data.get("status") == "error":
+        raise ValueError(f"No price data for {sym}: {data.get('message') or 'no data'}")
+
+    price = float(close)
+    change = float(data.get("percent_change") or 0)
+    prev = float(data.get("previous_close") or price)
+
+    return {
+        "ticker": meta["ticker"],
+        "name": meta["name"],
+        "sector": meta["sector"],
+        "price": round(price, 2),
+        "change": round(change, 2),
+        "previous_close": round(prev, 2),
+        "high": data.get("high"),
+        "low": data.get("low"),
+        "open": data.get("open"),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def get_quote(ticker: str, name: str = None, sector: str = None) -> dict:
+    """Live quote for a ticker — Finnhub for equities, Twelve Data for crypto."""
+    sym = ticker.upper()
+
+    cached = _quote_cache.get(sym)
+    if cached and time.time() - cached[0] < QUOTE_TTL:
+        return cached[1]
+
+    meta = _BY_TICKER.get(sym, {"ticker": sym, "name": name or sym, "sector": sector or "—"})
+    result = _twelvedata_quote(sym, meta) if _is_crypto(sym) else _finnhub_quote(sym, meta)
+
     _quote_cache[sym] = (time.time(), result)
     return result
 
@@ -169,30 +226,47 @@ def get_quotes(tickers: list) -> list:
 
 
 def search_symbols(query: str) -> list:
-    """Search the full symbol universe via Finnhub /search."""
-    key = _finnhub_key()
-    resp = requests.get(
-        f"{FINNHUB_BASE}/search",
-        params={"q": query, "token": key},
-        timeout=10,
-    )
-    data = resp.json()
-
+    """
+    Search the catalogue (incl. crypto) first, then the full equity universe
+    via Finnhub /search.
+    """
+    q = query.strip().lower()
     results = []
     seen = set()
-    for r in data.get("result", []):
-        sym = r.get("symbol")
-        desc = r.get("description")
-        typ = r.get("type") or "—"
-        # Skip odd symbols (options, dotted foreign listings) and dupes.
-        if not sym or not desc or sym in seen or "." in sym and sym not in _BY_TICKER:
-            continue
-        seen.add(sym)
-        pretty = desc.title() if desc.isupper() else desc
-        results.append({"ticker": sym, "name": pretty, "sector": typ})
-        if len(results) >= 25:
-            break
-    return results
+
+    # Local catalogue matches first — this is how crypto (BTC, ETH…) surfaces,
+    # since Finnhub's equity search won't return it.
+    for s in CATALOGUE:
+        if q in s["ticker"].lower() or q in s["name"].lower():
+            results.append(s)
+            seen.add(s["ticker"])
+
+    # Then the wider equity universe from Finnhub.
+    try:
+        key = _finnhub_key()
+        resp = requests.get(
+            f"{FINNHUB_BASE}/search",
+            params={"q": query, "token": key},
+            timeout=10,
+        )
+        data = resp.json()
+        for r in data.get("result", []):
+            sym = r.get("symbol")
+            desc = r.get("description")
+            typ = r.get("type") or "—"
+            if not sym or not desc or sym in seen:
+                continue
+            if "." in sym and sym not in _BY_TICKER:
+                continue
+            seen.add(sym)
+            pretty = desc.title() if desc.isupper() else desc
+            results.append({"ticker": sym, "name": pretty, "sector": typ})
+            if len(results) >= 25:
+                break
+    except Exception:
+        pass  # local results still returned
+
+    return results[:25]
 
 
 def get_history(ticker: str, range_key: str = "1M") -> dict:
@@ -207,7 +281,7 @@ def get_history(ticker: str, range_key: str = "1M") -> dict:
     resp = requests.get(
         f"{TWELVE_DATA_BASE}/time_series",
         params={
-            "symbol": sym,
+            "symbol": _td_symbol(sym),
             "interval": interval,
             "outputsize": outputsize,
             "apikey": key,
