@@ -460,3 +460,4 @@ Key knobs and where they live:
 - **`save_report_to_drive`** is an intentional stub (returns "unavailable").
 - **Crypto news:** Finnhub has no crypto company-news, so crypto is covered by
   general market headlines only.
+- **session management:** No session management. Stateless and single-tenant — no login, sessions, or per-user data; uploaded documents and the RAG index are shared across all callers. Add auth and per-user scoping before a public/multi-user deployment.
