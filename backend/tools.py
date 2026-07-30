@@ -192,12 +192,19 @@ def search_financial_news(query: str) -> dict:
 
 def save_report_to_drive(title: str, content: str) -> dict:
     """
-    Saves a report to Google Drive via MCP
-    Placeholder until MCP is fully connected
+    Saves a report to Google Drive via MCP.
+
+    NOT CONNECTED YET. This returns an honest "unavailable" status rather
+    than a fake success, so the model never tells the user a report was
+    saved when nothing was written anywhere.
     """
     return {
-        "message": f"Report '{title}' saved to Google Drive",
-        "status": "success"
+        "status": "unavailable",
+        "message": (
+            "Google Drive saving is not connected in this build. "
+            "Do not tell the user the report was saved. Present the "
+            f"analysis titled '{title}' directly in your reply instead."
+        )
     }
 
 
@@ -207,10 +214,17 @@ def save_report_to_drive(title: str, content: str) -> dict:
 # to the correct function
 # ─────────────────────────────────────────
 
-def execute_tool(tool_name: str, tool_input: dict) -> str:
+def execute_tool(tool_name: str, tool_input: dict, citations: list = None) -> str:
     """
     Receives a tool call from Claude and routes
-    it to the correct function
+    it to the correct function.
+
+    Args:
+        tool_name: Name of the tool Claude called
+        tool_input: The tool's input arguments
+        citations: Optional list to append source labels to. When provided,
+            document hits are recorded as "filename.pdf p.12" so the UI can
+            render them as source pills. Left as None, behaviour is unchanged.
     """
     if tool_name == "get_stock_data":
         result = get_stock_data(tool_input["tickers"])
@@ -220,6 +234,12 @@ def execute_tool(tool_name: str, tool_input: dict) -> str:
             tool_input["query"],
             tool_input.get("n_results", 5)
         )
+        if citations is not None:
+            for hit in result.get("results", []):
+                name = hit.get("document_name")
+                page = hit.get("page_number")
+                if name:
+                    citations.append(f"{name} p.{page}" if page else str(name))
 
     elif tool_name == "search_financial_news":
         result = search_financial_news(tool_input["query"])

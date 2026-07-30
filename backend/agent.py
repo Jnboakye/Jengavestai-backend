@@ -3,6 +3,7 @@
 import os
 import json
 from typing import Generator
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 from anthropic import Anthropic
 
@@ -18,6 +19,76 @@ WEB_SEARCH_TOOL = {
     "type": "web_search_20250305",
     "name": "web_search"
 }
+
+
+# ─────────────────────────────────────────────────────────
+# CITATION EXTRACTION
+#
+# Sources come from what the model actually used, not from parsing its
+# prose. The prompts forbid inline brackets, so scraping the text for
+# "[...]" returned nothing. Instead we read them off the web_search
+# result blocks and the RAG tool results.
+# ─────────────────────────────────────────────────────────
+
+def _source_label(url: str, title: str) -> str:
+    """Turns a result into a short pill label, preferring the domain."""
+    try:
+        netloc = urlparse(url).netloc if url else ""
+        if netloc.startswith("www."):
+            netloc = netloc[4:]
+    except Exception:
+        netloc = ""
+
+    label = netloc or (title or "")
+    return label[:60]
+
+
+def collect_citations_from_response(response, citations: list) -> None:
+    """
+    Appends source labels found in a Claude response to `citations`.
+
+    Server-side web search returns its results inline as
+    web_search_tool_result blocks, so every response in the agent loop
+    needs to be scanned, not just the final one.
+    """
+    try:
+        for block in response.content:
+            block_type = getattr(block, "type", None)
+
+            if block_type == "web_search_tool_result":
+                results = getattr(block, "content", None) or []
+                if not isinstance(results, list):
+                    continue  # an error object rather than results
+                for item in results:
+                    label = _source_label(
+                        getattr(item, "url", "") or "",
+                        getattr(item, "title", "") or ""
+                    )
+                    if label:
+                        citations.append(label)
+
+            elif block_type == "text":
+                for citation in getattr(block, "citations", None) or []:
+                    label = _source_label(
+                        getattr(citation, "url", "") or "",
+                        getattr(citation, "title", "") or ""
+                    )
+                    if label:
+                        citations.append(label)
+
+    except Exception as e:
+        print(f"Error collecting citations: {e}")
+
+
+def dedupe_preserving_order(items: list) -> list:
+    """Removes duplicates while keeping first-seen order."""
+    seen = set()
+    ordered = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            ordered.append(item)
+    return ordered
 
 # ─────────────────────────────────────────────────────────
 # AGENT INITIALIZATION
@@ -178,7 +249,9 @@ class JengaVestAgent:
                 "tools_used": [],
                 "route": query_type
             }
-        
+
+        collect_citations_from_response(response, citations)
+
         # Handle agentic loop with tool use
         while response.stop_reason == "tool_use":
             # Find tool_use blocks
@@ -195,9 +268,9 @@ class JengaVestAgent:
                 print(f"Tool called: {tool_name}")
                 tools_used.append(tool_name)
                 
-                # Execute tool
+                # Execute tool (citations collects document sources)
                 try:
-                    result = execute_tool(tool_name, tool_input)
+                    result = execute_tool(tool_name, tool_input, citations)
                 except Exception as e:
                     result = f"Error executing {tool_name}: {str(e)}"
                 
@@ -241,26 +314,23 @@ class JengaVestAgent:
             except Exception as e:
                 return {
                     "response": f"Error in agent loop: {str(e)}",
-                    "citations": [],
+                    "citations": dedupe_preserving_order(citations),
                     "tools_used": tools_used,
                     "route": query_type
                 }
-        
+
+            collect_citations_from_response(response, citations)
+
         # Extract final text response
         final_response = ""
         for block in response.content:
             if block.type == "text":
                 final_response += block.text
-        
-        # Extract citations from response
-        citation_pattern = r'\[(.*?)\]'
-        import re
-        citations = re.findall(citation_pattern, final_response)
-        
+
         return {
             "response": final_response,
-            "citations": citations,
-            "tools_used": list(set(tools_used)),  # Remove duplicates
+            "citations": dedupe_preserving_order(citations),
+            "tools_used": dedupe_preserving_order(tools_used),
             "route": query_type
         }
     

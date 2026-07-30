@@ -3,7 +3,7 @@ uvicorn
 anthropic
 chromadb
 rank-bm25
-yfinance
+requests
 python-dotenv
 pypdf
 tiktoken

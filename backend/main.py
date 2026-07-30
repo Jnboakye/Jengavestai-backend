@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from agent import get_agent
 from rag import initialize_rag_pipeline
 from tools import TOOLS
+from stocks import list_stocks, search_stocks, get_quote, get_history
 
 # Load environment variables
 load_dotenv()
@@ -308,6 +309,44 @@ async def upload_document(file: UploadFile = File(...)):
 
 
 # ─────────────────────────────────────────────────────────
+# STOCK ENDPOINTS (live market data via yfinance)
+# ─────────────────────────────────────────────────────────
+
+@app.get("/stocks")
+async def stocks(q: Optional[str] = None):
+    """
+    Return the tradable stock catalogue, optionally filtered by `q`
+    (matches ticker or company name). Prices are not included here —
+    the frontend fetches a live quote per stock on demand.
+    """
+    return {"stocks": search_stocks(q) if q else list_stocks()}
+
+
+@app.get("/stocks/{ticker}/quote")
+async def stock_quote(ticker: str):
+    """Live quote (price + day change) for a single ticker."""
+    try:
+        return get_quote(ticker.upper())
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not fetch quote for {ticker}: {e}")
+
+
+@app.get("/stocks/{ticker}/history")
+async def stock_history(ticker: str, range: str = "1M"):
+    """
+    Historical price series for a ticker.
+    `range` is one of: 1D, 1W, 1M, 1Y, 5Y.
+    """
+    range_key = range.upper()
+    if range_key not in {"1D", "1W", "1M", "1Y", "5Y"}:
+        raise HTTPException(status_code=400, detail="range must be one of 1D, 1W, 1M, 1Y, 5Y")
+    try:
+        return get_history(ticker.upper(), range_key)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not fetch history for {ticker}: {e}")
+
+
+# ─────────────────────────────────────────────────────────
 # ROOT ENDPOINT
 # ─────────────────────────────────────────────────────────
 
@@ -322,7 +361,10 @@ async def root():
             "health": "GET /health",
             "chat": "POST /chat",
             "chat_stream": "POST /chat/stream",
-            "upload": "POST /upload"
+            "upload": "POST /upload",
+            "stocks": "GET /stocks",
+            "stock_quote": "GET /stocks/{ticker}/quote",
+            "stock_history": "GET /stocks/{ticker}/history?range=1D|1W|1M|1Y|5Y"
         }
     }
 
