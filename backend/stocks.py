@@ -14,6 +14,8 @@
 # for the quote, synthetic series for the chart), so the UI never breaks.
 
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import requests
@@ -71,6 +73,12 @@ RANGE_MAP = {
 }
 
 
+# Short-lived quote cache so the list view (many symbols) doesn't hammer
+# Finnhub's rate limit on every page load.
+_quote_cache: dict = {}
+QUOTE_TTL = 60  # seconds
+
+
 def _finnhub_key() -> str:
     key = os.getenv("FINNHUB_API_KEY")
     if not key:
@@ -101,11 +109,16 @@ def search_stocks(query: str):
     ]
 
 
-def get_quote(ticker: str) -> dict:
-    """Live quote for a single ticker via Finnhub /quote."""
+def get_quote(ticker: str, name: str = None, sector: str = None) -> dict:
+    """Live quote for a single ticker via Finnhub /quote (cached briefly)."""
     key = _finnhub_key()
     sym = ticker.upper()
-    meta = _BY_TICKER.get(sym, {"ticker": sym, "name": sym, "sector": "—"})
+
+    cached = _quote_cache.get(sym)
+    if cached and time.time() - cached[0] < QUOTE_TTL:
+        return cached[1]
+
+    meta = _BY_TICKER.get(sym, {"ticker": sym, "name": name or sym, "sector": sector or "—"})
 
     resp = requests.get(
         f"{FINNHUB_BASE}/quote",
@@ -123,7 +136,7 @@ def get_quote(ticker: str) -> dict:
     if change is None:
         change = ((price - prev) / prev * 100) if prev else 0.0
 
-    return {
+    result = {
         "ticker": meta["ticker"],
         "name": meta["name"],
         "sector": meta["sector"],
@@ -135,6 +148,51 @@ def get_quote(ticker: str) -> dict:
         "open": quote.get("o"),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+    _quote_cache[sym] = (time.time(), result)
+    return result
+
+
+def get_quotes(tickers: list) -> list:
+    """Live quotes for several tickers in parallel. Failures come back with
+    price=None so the frontend can keep its indicative value."""
+    def one(t: str) -> dict:
+        try:
+            return get_quote(t)
+        except Exception:
+            meta = _BY_TICKER.get(t.upper(), {"ticker": t.upper(), "name": t.upper(), "sector": "—"})
+            return {**meta, "price": None, "change": None}
+
+    if not tickers:
+        return []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        return list(pool.map(one, tickers))
+
+
+def search_symbols(query: str) -> list:
+    """Search the full symbol universe via Finnhub /search."""
+    key = _finnhub_key()
+    resp = requests.get(
+        f"{FINNHUB_BASE}/search",
+        params={"q": query, "token": key},
+        timeout=10,
+    )
+    data = resp.json()
+
+    results = []
+    seen = set()
+    for r in data.get("result", []):
+        sym = r.get("symbol")
+        desc = r.get("description")
+        typ = r.get("type") or "—"
+        # Skip odd symbols (options, dotted foreign listings) and dupes.
+        if not sym or not desc or sym in seen or "." in sym and sym not in _BY_TICKER:
+            continue
+        seen.add(sym)
+        pretty = desc.title() if desc.isupper() else desc
+        results.append({"ticker": sym, "name": pretty, "sector": typ})
+        if len(results) >= 25:
+            break
+    return results
 
 
 def get_history(ticker: str, range_key: str = "1M") -> dict:

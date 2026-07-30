@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from agent import get_agent
 from rag import initialize_rag_pipeline
 from tools import TOOLS
-from stocks import list_stocks, search_stocks, get_quote, get_history
+from stocks import list_stocks, search_stocks, get_quote, get_quotes, get_history, search_symbols
 
 # Load environment variables
 load_dotenv()
@@ -317,9 +317,33 @@ async def stocks(q: Optional[str] = None):
     """
     Return the tradable stock catalogue, optionally filtered by `q`
     (matches ticker or company name). Prices are not included here —
-    the frontend fetches a live quote per stock on demand.
+    the frontend fetches live quotes separately.
     """
     return {"stocks": search_stocks(q) if q else list_stocks()}
+
+
+@app.get("/stocks/quotes")
+async def stocks_quotes(symbols: str):
+    """
+    Live quotes for several tickers at once (comma-separated `symbols`),
+    used to show current prices in the Markets list.
+    """
+    tickers = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    return {"quotes": get_quotes(tickers)}
+
+
+@app.get("/stocks/search")
+async def stocks_search(q: str):
+    """
+    Search the full symbol universe (any listed stock/ETF), not just the
+    bundled catalogue.
+    """
+    if not q or not q.strip():
+        return {"results": []}
+    try:
+        return {"results": search_symbols(q.strip())}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Search failed: {e}")
 
 
 @app.get("/stocks/{ticker}/quote")
