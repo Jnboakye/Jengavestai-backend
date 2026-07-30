@@ -61,18 +61,17 @@ app = FastAPI(
     version="0.1.0"
 )
 
-# Enable CORS for Next.js frontend
+# Enable CORS for the Next.js frontend (local + Vercel + Netlify previews).
+# If you deploy the frontend on a custom domain, add it to the regex below.
 origins = [
     "http://localhost:3000",
     "http://localhost:3001",
-    "https://*.vercel.app",
-
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origin_regex=r"https://.*\.(vercel\.app|netlify\.app)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

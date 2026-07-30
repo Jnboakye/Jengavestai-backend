@@ -221,7 +221,7 @@ def get_quotes(tickers: list) -> list:
 
     if not tickers:
         return []
-    with ThreadPoolExecutor(max_workers=8) as pool:
+    with ThreadPoolExecutor(max_workers=12) as pool:
         return list(pool.map(one, tickers))
 
 
