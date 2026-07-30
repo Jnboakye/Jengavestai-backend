@@ -389,5 +389,8 @@ def get_news(symbols: list) -> list:
     articles.sort(key=lambda a: a.get("datetime") or 0, reverse=True)
     articles = articles[:24]
 
-    _news_cache[key_cache] = (time.time(), articles)
+    # Only cache real results — never let a transient empty response stick
+    # around for the full TTL.
+    if articles:
+        _news_cache[key_cache] = (time.time(), articles)
     return articles
