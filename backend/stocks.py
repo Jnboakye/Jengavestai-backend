@@ -23,6 +23,10 @@ import requests
 FINNHUB_BASE = "https://finnhub.io/api/v1"
 TWELVE_DATA_BASE = "https://api.twelvedata.com"
 
+# Reuse one connection pool across all calls so the many quote requests don't
+# each pay for a fresh TLS handshake — meaningfully faster on weak instances.
+_http = requests.Session()
+
 # ─────────────────────────────────────────────────────────
 # CATALOGUE — the tradable universe the frontend can search.
 # name/sector are served from here; price/change/history come live.
@@ -132,7 +136,7 @@ def search_stocks(query: str):
 def _finnhub_quote(sym: str, meta: dict) -> dict:
     """Equity quote via Finnhub /quote."""
     key = _finnhub_key()
-    resp = requests.get(
+    resp = _http.get(
         f"{FINNHUB_BASE}/quote",
         params={"symbol": sym, "token": key},
         timeout=10,
@@ -165,7 +169,7 @@ def _finnhub_quote(sym: str, meta: dict) -> dict:
 def _twelvedata_quote(sym: str, meta: dict) -> dict:
     """Crypto quote via Twelve Data /quote (BASE/USD)."""
     key = _twelvedata_key()
-    resp = requests.get(
+    resp = _http.get(
         f"{TWELVE_DATA_BASE}/quote",
         params={"symbol": _td_symbol(sym), "apikey": key},
         timeout=10,
@@ -244,7 +248,7 @@ def search_symbols(query: str) -> list:
     # Then the wider equity universe from Finnhub.
     try:
         key = _finnhub_key()
-        resp = requests.get(
+        resp = _http.get(
             f"{FINNHUB_BASE}/search",
             params={"q": query, "token": key},
             timeout=10,
@@ -278,7 +282,7 @@ def get_history(ticker: str, range_key: str = "1M") -> dict:
     sym = ticker.upper()
     interval, outputsize = RANGE_MAP.get(range_key, RANGE_MAP["1M"])
 
-    resp = requests.get(
+    resp = _http.get(
         f"{TWELVE_DATA_BASE}/time_series",
         params={
             "symbol": _td_symbol(sym),
@@ -347,7 +351,7 @@ def get_news(symbols: list) -> list:
 
     def company_news(sym: str):
         try:
-            resp = requests.get(
+            resp = _http.get(
                 f"{FINNHUB_BASE}/company-news",
                 params={"symbol": sym, "from": from_d, "to": to_d, "token": api_key},
                 timeout=10,
@@ -370,7 +374,7 @@ def get_news(symbols: list) -> list:
 
     # General market news (also covers crypto and anything unmatched).
     try:
-        resp = requests.get(
+        resp = _http.get(
             f"{FINNHUB_BASE}/news",
             params={"category": "general", "token": api_key},
             timeout=10,

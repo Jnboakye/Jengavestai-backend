@@ -332,6 +332,16 @@ async def stocks_quotes(symbols: str):
     return {"quotes": get_quotes(tickers)}
 
 
+@app.get("/documents")
+async def list_documents():
+    """List the PDF documents currently indexed for RAG search."""
+    folder = "./documents"
+    if not os.path.isdir(folder):
+        return {"documents": []}
+    files = sorted(f for f in os.listdir(folder) if f.lower().endswith(".pdf"))
+    return {"documents": files}
+
+
 @app.get("/news")
 async def market_news(symbols: Optional[str] = None):
     """
