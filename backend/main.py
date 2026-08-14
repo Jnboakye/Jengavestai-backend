@@ -555,6 +555,71 @@ async def reset_portfolio(user: dict = Depends(require_user)):
 
 
 # ─────────────────────────────────────────────────────────
+# CHAT HISTORY (conversations + messages, per user)
+# ─────────────────────────────────────────────────────────
+
+class NewConversationRequest(BaseModel):
+    title: Optional[str] = None
+
+
+class NewMessageRequest(BaseModel):
+    role: str
+    content: str
+    citations: Optional[List[str]] = None
+
+
+@app.get("/conversations")
+async def list_conversations(user: dict = Depends(require_user)):
+    res = (
+        auth.service().table("conversations").select("*")
+        .eq("user_id", user["id"]).order("created_at", desc=True).execute()
+    )
+    return {"conversations": res.data or []}
+
+
+@app.post("/conversations")
+async def create_conversation(req: NewConversationRequest, user: dict = Depends(require_user)):
+    title = (req.title or "New conversation").strip()[:80] or "New conversation"
+    res = (
+        auth.service().table("conversations")
+        .insert({"user_id": user["id"], "title": title}).execute()
+    )
+    return res.data[0]
+
+
+@app.delete("/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str, user: dict = Depends(require_user)):
+    auth.service().table("conversations").delete().eq("user_id", user["id"]).eq("id", conversation_id).execute()
+    return {"ok": True}
+
+
+@app.get("/conversations/{conversation_id}/messages")
+async def list_messages(conversation_id: str, user: dict = Depends(require_user)):
+    res = (
+        auth.service().table("messages").select("role,content,citations,created_at")
+        .eq("user_id", user["id"]).eq("conversation_id", conversation_id)
+        .order("created_at").execute()
+    )
+    return {"messages": res.data or []}
+
+
+@app.post("/conversations/{conversation_id}/messages")
+async def add_message(conversation_id: str, req: NewMessageRequest, user: dict = Depends(require_user)):
+    if req.role not in ("user", "assistant"):
+        raise HTTPException(status_code=400, detail="role must be 'user' or 'assistant'")
+    auth.service().table("messages").insert(
+        {
+            "user_id": user["id"],
+            "conversation_id": conversation_id,
+            "role": req.role,
+            "content": req.content,
+            "citations": req.citations,
+        }
+    ).execute()
+    return {"ok": True}
+
+
+# ─────────────────────────────────────────────────────────
 # ROOT ENDPOINT
 # ─────────────────────────────────────────────────────────
 
