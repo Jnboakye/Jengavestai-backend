@@ -438,7 +438,10 @@ async def auth_status():
 async def auth_login_google():
     if not auth.auth_enabled:
         raise HTTPException(status_code=503, detail="Auth is not configured")
-    return RedirectResponse(auth.start_google())
+    try:
+        return RedirectResponse(auth.start_google())
+    except Exception:
+        return RedirectResponse(f"{auth.FRONTEND_URL}/login?error=auth_failed")
 
 
 @app.post("/auth/magic-link")
@@ -453,16 +456,16 @@ async def auth_magic_link(req: MagicLinkRequest):
 
 
 @app.get("/auth/callback")
-async def auth_callback(code: Optional[str] = None, error: Optional[str] = None):
+async def auth_callback(code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
     """
     Where Google / magic link land. Exchange the code for a session, then
     redirect back to the frontend with the tokens in the URL fragment (so they
     aren't logged), where the frontend stores them for bearer auth.
     """
-    if error or not code:
+    if error or not code or not state:
         return RedirectResponse(f"{auth.FRONTEND_URL}/login?error=auth_failed")
     try:
-        tokens = auth.exchange_code(code)
+        tokens = auth.exchange_code(state, code)
         frag = f"at={tokens['access_token']}&rt={tokens['refresh_token']}"
         return RedirectResponse(f"{auth.FRONTEND_URL}/auth/callback#{frag}")
     except Exception:
@@ -501,8 +504,8 @@ def _row_to_holding(row: dict) -> dict:
 
 @app.get("/portfolio")
 async def get_portfolio(user: dict = Depends(require_user)):
-    res = auth.service().table("holdings").select("*").eq("user_id", user["id"]).order("added_at").execute()
-    return {"holdings": [_row_to_holding(r) for r in (res.data or [])]}
+    rows = auth.db_get("holdings", {"select": "*", "user_id": f"eq.{user['id']}", "order": "added_at"})
+    return {"holdings": [_row_to_holding(r) for r in rows]}
 
 
 @app.post("/portfolio")
@@ -510,11 +513,10 @@ async def add_portfolio(req: AddHoldingRequest, user: dict = Depends(require_use
     if req.amount_usd <= 0 or req.price <= 0:
         raise HTTPException(status_code=400, detail="amount and price must be positive")
 
-    svc = auth.service()
-    existing = (
-        svc.table("holdings").select("*").eq("user_id", user["id"]).eq("ticker", req.ticker).execute()
+    rows = auth.db_get(
+        "holdings",
+        {"select": "*", "user_id": f"eq.{user['id']}", "ticker": f"eq.{req.ticker}"},
     )
-    rows = existing.data or []
     if rows:
         old = rows[0]
         old_amount = float(old["amount_usd"])
@@ -528,7 +530,8 @@ async def add_portfolio(req: AddHoldingRequest, user: dict = Depends(require_use
         total_amount = req.amount_usd
         purchase_price = req.price
 
-    svc.table("holdings").upsert(
+    auth.db_upsert(
+        "holdings",
         {
             "user_id": user["id"],
             "ticker": req.ticker,
@@ -537,20 +540,20 @@ async def add_portfolio(req: AddHoldingRequest, user: dict = Depends(require_use
             "amount_usd": total_amount,
             "purchase_price": purchase_price,
         },
-        on_conflict="user_id,ticker",
-    ).execute()
+        "user_id,ticker",
+    )
     return {"ok": True}
 
 
 @app.delete("/portfolio/{ticker}")
 async def delete_holding(ticker: str, user: dict = Depends(require_user)):
-    auth.service().table("holdings").delete().eq("user_id", user["id"]).eq("ticker", ticker.upper()).execute()
+    auth.db_delete("holdings", {"user_id": f"eq.{user['id']}", "ticker": f"eq.{ticker.upper()}"})
     return {"ok": True}
 
 
 @app.delete("/portfolio")
 async def reset_portfolio(user: dict = Depends(require_user)):
-    auth.service().table("holdings").delete().eq("user_id", user["id"]).execute()
+    auth.db_delete("holdings", {"user_id": f"eq.{user['id']}"})
     return {"ok": True}
 
 
@@ -570,52 +573,54 @@ class NewMessageRequest(BaseModel):
 
 @app.get("/conversations")
 async def list_conversations(user: dict = Depends(require_user)):
-    res = (
-        auth.service().table("conversations").select("*")
-        .eq("user_id", user["id"]).order("created_at", desc=True).execute()
+    rows = auth.db_get(
+        "conversations",
+        {"select": "*", "user_id": f"eq.{user['id']}", "order": "created_at.desc"},
     )
-    return {"conversations": res.data or []}
+    return {"conversations": rows}
 
 
 @app.post("/conversations")
 async def create_conversation(req: NewConversationRequest, user: dict = Depends(require_user)):
     title = (req.title or "New conversation").strip()[:80] or "New conversation"
-    res = (
-        auth.service().table("conversations")
-        .insert({"user_id": user["id"], "title": title}).execute()
-    )
-    return res.data[0]
+    rows = auth.db_insert("conversations", {"user_id": user["id"], "title": title})
+    return rows[0] if rows else {"id": None, "title": title}
 
 
 @app.delete("/conversations/{conversation_id}")
 async def delete_conversation(conversation_id: str, user: dict = Depends(require_user)):
-    auth.service().table("conversations").delete().eq("user_id", user["id"]).eq("id", conversation_id).execute()
+    auth.db_delete("conversations", {"user_id": f"eq.{user['id']}", "id": f"eq.{conversation_id}"})
     return {"ok": True}
 
 
 @app.get("/conversations/{conversation_id}/messages")
 async def list_messages(conversation_id: str, user: dict = Depends(require_user)):
-    res = (
-        auth.service().table("messages").select("role,content,citations,created_at")
-        .eq("user_id", user["id"]).eq("conversation_id", conversation_id)
-        .order("created_at").execute()
+    rows = auth.db_get(
+        "messages",
+        {
+            "select": "role,content,citations,created_at",
+            "user_id": f"eq.{user['id']}",
+            "conversation_id": f"eq.{conversation_id}",
+            "order": "created_at",
+        },
     )
-    return {"messages": res.data or []}
+    return {"messages": rows}
 
 
 @app.post("/conversations/{conversation_id}/messages")
 async def add_message(conversation_id: str, req: NewMessageRequest, user: dict = Depends(require_user)):
     if req.role not in ("user", "assistant"):
         raise HTTPException(status_code=400, detail="role must be 'user' or 'assistant'")
-    auth.service().table("messages").insert(
+    auth.db_insert(
+        "messages",
         {
             "user_id": user["id"],
             "conversation_id": conversation_id,
             "role": req.role,
             "content": req.content,
             "citations": req.citations,
-        }
-    ).execute()
+        },
+    )
     return {"ok": True}
 
 
