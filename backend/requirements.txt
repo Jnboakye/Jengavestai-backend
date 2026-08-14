@@ -8,3 +8,5 @@ python-dotenv
 pypdf
 tiktoken
 python-multipart
+supabase
+PyJWT

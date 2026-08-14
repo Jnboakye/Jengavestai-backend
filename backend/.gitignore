@@ -1,0 +1,19 @@
+# Environment / secrets — never commit these
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Local RAG state (generated)
+chroma_db/
+bm25_index.json
+documents/
+
+# OS
+.DS_Store

@@ -3,8 +3,8 @@
 import os
 import json
 from typing import List, Optional
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Header
+from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -13,6 +13,7 @@ from agent import get_agent
 from rag import initialize_rag_pipeline
 from tools import TOOLS
 from stocks import list_stocks, search_stocks, get_quote, get_quotes, get_history, search_symbols, get_news
+import auth
 
 # Load environment variables
 load_dotenv()
@@ -392,6 +393,165 @@ async def stock_history(ticker: str, range: str = "1M"):
         return get_history(ticker.upper(), range_key)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not fetch history for {ticker}: {e}")
+
+
+# ─────────────────────────────────────────────────────────
+# AUTH (Supabase, backend-owned) + per-user portfolio
+# ─────────────────────────────────────────────────────────
+
+class MagicLinkRequest(BaseModel):
+    email: str
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class AddHoldingRequest(BaseModel):
+    ticker: str
+    name: str
+    sector: str
+    amount_usd: float
+    price: float
+
+
+def require_user(authorization: Optional[str] = Header(None)) -> dict:
+    """Validate the Bearer session token and return the user (or 401)."""
+    if not auth.auth_enabled:
+        raise HTTPException(status_code=401, detail="Auth is not configured")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    token = authorization.split(" ", 1)[1]
+    try:
+        return auth.verify(token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+
+
+@app.get("/auth/status")
+async def auth_status():
+    """Tells the frontend whether real auth is available (else guest mode)."""
+    return {"enabled": auth.auth_enabled}
+
+
+@app.get("/auth/login/google")
+async def auth_login_google():
+    if not auth.auth_enabled:
+        raise HTTPException(status_code=503, detail="Auth is not configured")
+    return RedirectResponse(auth.start_google())
+
+
+@app.post("/auth/magic-link")
+async def auth_magic_link(req: MagicLinkRequest):
+    if not auth.auth_enabled:
+        raise HTTPException(status_code=503, detail="Auth is not configured")
+    try:
+        auth.start_magic_link(req.email)
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not send magic link: {e}")
+
+
+@app.get("/auth/callback")
+async def auth_callback(code: Optional[str] = None, error: Optional[str] = None):
+    """
+    Where Google / magic link land. Exchange the code for a session, then
+    redirect back to the frontend with the tokens in the URL fragment (so they
+    aren't logged), where the frontend stores them for bearer auth.
+    """
+    if error or not code:
+        return RedirectResponse(f"{auth.FRONTEND_URL}/login?error=auth_failed")
+    try:
+        tokens = auth.exchange_code(code)
+        frag = f"at={tokens['access_token']}&rt={tokens['refresh_token']}"
+        return RedirectResponse(f"{auth.FRONTEND_URL}/auth/callback#{frag}")
+    except Exception:
+        return RedirectResponse(f"{auth.FRONTEND_URL}/login?error=auth_failed")
+
+
+@app.post("/auth/refresh")
+async def auth_refresh(req: RefreshRequest):
+    try:
+        return auth.refresh(req.refresh_token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Could not refresh session")
+
+
+@app.get("/auth/me")
+async def auth_me(user: dict = Depends(require_user)):
+    return user
+
+
+@app.post("/auth/logout")
+async def auth_logout():
+    # Stateless: the frontend drops its tokens. (Access tokens are short-lived.)
+    return {"ok": True}
+
+
+def _row_to_holding(row: dict) -> dict:
+    return {
+        "ticker": row["ticker"],
+        "name": row["name"],
+        "sector": row["sector"],
+        "amountUsd": float(row["amount_usd"]),
+        "purchasePrice": float(row["purchase_price"]),
+        "addedAt": row["added_at"],
+    }
+
+
+@app.get("/portfolio")
+async def get_portfolio(user: dict = Depends(require_user)):
+    res = auth.service().table("holdings").select("*").eq("user_id", user["id"]).order("added_at").execute()
+    return {"holdings": [_row_to_holding(r) for r in (res.data or [])]}
+
+
+@app.post("/portfolio")
+async def add_portfolio(req: AddHoldingRequest, user: dict = Depends(require_user)):
+    if req.amount_usd <= 0 or req.price <= 0:
+        raise HTTPException(status_code=400, detail="amount and price must be positive")
+
+    svc = auth.service()
+    existing = (
+        svc.table("holdings").select("*").eq("user_id", user["id"]).eq("ticker", req.ticker).execute()
+    )
+    rows = existing.data or []
+    if rows:
+        old = rows[0]
+        old_amount = float(old["amount_usd"])
+        old_purchase = float(old["purchase_price"])
+        old_shares = old_amount / old_purchase
+        new_shares = req.amount_usd / req.price
+        total_amount = old_amount + req.amount_usd
+        total_shares = old_shares + new_shares
+        purchase_price = total_amount / total_shares
+    else:
+        total_amount = req.amount_usd
+        purchase_price = req.price
+
+    svc.table("holdings").upsert(
+        {
+            "user_id": user["id"],
+            "ticker": req.ticker,
+            "name": req.name,
+            "sector": req.sector,
+            "amount_usd": total_amount,
+            "purchase_price": purchase_price,
+        },
+        on_conflict="user_id,ticker",
+    ).execute()
+    return {"ok": True}
+
+
+@app.delete("/portfolio/{ticker}")
+async def delete_holding(ticker: str, user: dict = Depends(require_user)):
+    auth.service().table("holdings").delete().eq("user_id", user["id"]).eq("ticker", ticker.upper()).execute()
+    return {"ok": True}
+
+
+@app.delete("/portfolio")
+async def reset_portfolio(user: dict = Depends(require_user)):
+    auth.service().table("holdings").delete().eq("user_id", user["id"]).execute()
+    return {"ok": True}
 
 
 # ─────────────────────────────────────────────────────────
