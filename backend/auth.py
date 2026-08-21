@@ -14,7 +14,6 @@ import time
 import base64
 import hashlib
 import secrets
-from urllib.parse import quote
 
 import requests
 import jwt
@@ -62,18 +61,6 @@ def _redirect_to(state: str) -> str:
 
 
 # ── OAuth / magic link ─────────────────────────────────────────────────────
-
-def start_google() -> str:
-    """Build the Supabase Google authorize URL (browser gets redirected here)."""
-    verifier, challenge = _new_challenge()
-    state = _store_state(verifier)
-    rt = quote(_redirect_to(state), safe="")
-    return (
-        f"{SUPABASE_URL}/auth/v1/authorize?provider=google"
-        f"&redirect_to={rt}"
-        f"&code_challenge={challenge}&code_challenge_method=s256"
-    )
-
 
 def start_magic_link(email: str) -> None:
     """Ask Supabase to email a magic link that returns to our callback."""

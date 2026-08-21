@@ -434,16 +434,6 @@ async def auth_status():
     return {"enabled": auth.auth_enabled}
 
 
-@app.get("/auth/login/google")
-async def auth_login_google():
-    if not auth.auth_enabled:
-        raise HTTPException(status_code=503, detail="Auth is not configured")
-    try:
-        return RedirectResponse(auth.start_google())
-    except Exception:
-        return RedirectResponse(f"{auth.FRONTEND_URL}/login?error=auth_failed")
-
-
 @app.post("/auth/magic-link")
 async def auth_magic_link(req: MagicLinkRequest):
     if not auth.auth_enabled:
@@ -458,7 +448,7 @@ async def auth_magic_link(req: MagicLinkRequest):
 @app.get("/auth/callback")
 async def auth_callback(code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
     """
-    Where Google / magic link land. Exchange the code for a session, then
+    Where the magic link lands. Exchange the code for a session, then
     redirect back to the frontend with the tokens in the URL fragment (so they
     aren't logged), where the frontend stores them for bearer auth.
     """
